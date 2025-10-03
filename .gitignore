@@ -1,0 +1,17 @@
+# Python environment files
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Dependencies
+/default_db/
+
+# Streamlit/IDE files
+.streamlit/
+.vscode/
+
+# Environment secrets
+.env
+.DS_Store
