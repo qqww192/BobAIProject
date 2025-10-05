@@ -3,7 +3,7 @@ import os
 import tempfile
 
 # RAG & LangChain components
-from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.document_loaders import PyPDFLoader, TextLoader 
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import SentenceTransformerEmbeddings
@@ -40,14 +40,66 @@ with open("persona_prompt.txt", "r") as f:
     SYSTEM_INSTRUCTION = f.read()
 
 # Load Default Knowledge Base
-@st.cache_resource
+# app.py (Near the top, where the function is defined)
+
+# IMPORTANT: Ensure all necessary RAG imports are at the top of app.py:
+# from langchain_community.document_loaders import TextLoader, PyPDFLoader
+# from langchain.text_splitter import CharacterTextSplitter
+# from langchain_community.vectorstores import Chroma
+# from langchain_community.embeddings import SentenceTransformerEmbeddings
+
+SOURCE_DIR = "./source_docs"
+PERSIST_DIR = "./default_db"
+
+@st.cache_resource(show_spinner=False)
 def load_default_db():
-    try:
-        embeddings_model = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2") 
-        return Chroma(persist_directory=PERSIST_DIR, embedding_function=embeddings_model)
-    except Exception as e:
-        st.error(f"Error loading default knowledge base. Did you run ingest.py? Error: {e}")
+    embeddings_model = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2") 
+
+    # --- Step 1: Try to Load Existing DB ---
+    if os.path.exists(PERSIST_DIR):
+        try:
+            # Attempt to load the pre-existing DB
+            st.success("Loading existing knowledge base...")
+            return Chroma(persist_directory=PERSIST_DIR, embedding_function=embeddings_model)
+        except Exception as e:
+            st.warning(f"Failed to load existing DB ({e}). Rebuilding knowledge base...")
+            # If load fails, we proceed to rebuilding below.
+
+    # --- Step 2: Rebuild DB if missing or failed to load ---
+    if not os.path.exists(SOURCE_DIR) or not os.listdir(SOURCE_DIR):
+        st.error("Cannot build knowledge base: 'source_docs' folder is missing or empty.")
         return None
+
+    with st.spinner("Building Robert Palmer's foundational knowledge base..."):
+        documents = []
+        for filename in os.listdir(SOURCE_DIR):
+            file_path = os.path.join(SOURCE_DIR, filename)
+            if filename.endswith(".pdf"):
+                try:
+                    loader = PyPDFLoader(file_path)
+                    documents.extend(loader.load())
+                except Exception as e:
+                    st.warning(f"Warning: Failed to load PDF {filename}. Skipping. Error: {e}")
+            elif filename.endswith(".txt"): 
+                loader = TextLoader(file_path)
+                documents.extend(loader.load())
+
+        if not documents:
+            st.error("No valid documents found in source_docs.")
+            return None
+            
+        text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+        texts = text_splitter.split_documents(documents)
+
+        # Create new vector store
+        vectordb = Chroma.from_documents(
+            documents=texts,
+            embedding=embeddings_model,
+            persist_directory=PERSIST_DIR 
+        )
+        vectordb.persist()
+        st.success("Knowledge base built successfully.")
+        return vectordb
 
 VECTOR_STORE = load_default_db()
 
